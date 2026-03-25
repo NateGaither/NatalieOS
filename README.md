@@ -1,4 +1,15 @@
 # NatalieOS
+---
+
+## ⚖️ Credits & Disclaimer
+This project was conceptualized and organized by me, but the **Python logic, dashboard architecture, and integration steps were generated with the assistance of Gemini (AI).** I am using this repository to learn how to bridge local AI models (Ollama, Whisper, Kokoro) with VRChat and to practice managing a full-stack project.
+
+### Core Technologies Used:
+* **Brain:** [Ollama](https://ollama.com/) (Lama 3)
+* **Speech-to-Text:** [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper)
+* **Text-to-Speech:** [Kokoro-82M](https://github.com/hexgrad/Kokoro-82M)
+* **Web HUD:** Flask & Vanilla JS
+
 🐱 Natalie OS v2.0
 The Stealth AI Companion for VRChat
 
