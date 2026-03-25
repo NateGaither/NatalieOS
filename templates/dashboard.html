@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Natalie OS | HUD</title>
+    <style>
+        :root {
+            --cyan: #00f2ff;
+            --pink: #ff007a;
+            --bg: #05050a;
+            --card: #10101a;
+        }
+        body {
+            background-color: var(--bg);
+            color: white;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container { width: 100%; max-width: 400px; }
+        h1 { font-size: 1.2rem; color: var(--cyan); letter-spacing: 3px; border-bottom: 1px solid var(--cyan); padding-bottom: 10px; margin-bottom: 20px; text-transform: uppercase; }
+        
+        .card {
+            background: var(--card);
+            border: 1px solid #222;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        .label { font-size: 0.8rem; color: #888; text-transform: uppercase; margin-bottom: 5px; }
+        .value { font-size: 1.1rem; font-weight: bold; margin-bottom: 15px; }
+
+        .bar-container { background: #222; height: 12px; border-radius: 6px; margin-top: 5px; margin-bottom: 15px; overflow: hidden; }
+        .bar-fill { height: 100%; width: 50%; transition: width 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        #sass-fill { background: linear-gradient(90deg, #ff4b2b, var(--pink)); box-shadow: 0 0 10px var(--pink); }
+        #cute-fill { background: linear-gradient(90deg, #00b09b, #96c93d); box-shadow: 0 0 10px #96c93d; }
+
+        .status-dot { height: 10px; width: 10px; background-color: var(--cyan); border-radius: 50%; display: inline-block; margin-right: 10px; animation: blink 1s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+
+        .transcript {
+            background: #000;
+            border-left: 3px solid var(--pink);
+            padding: 15px;
+            font-style: italic;
+            font-size: 1rem;
+            line-height: 1.4;
+            min-height: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Natalie System HUD</h1>
+        
+        <div class="card">
+            <div class="label">System Status</div>
+            <div class="value"><span class="status-dot"></span><span id="status">INITIALIZING...</span></div>
+            <div class="label">Active Environment</div>
+            <div id="game" class="value">Detecting...</div>
+        </div>
+
+        <div class="card">
+            <div class="label">Sass Matrix (<span id="sass-val">50</span>%)</div>
+            <div class="bar-container"><div id="sass-fill" class="bar-fill"></div></div>
+            
+            <div class="label">Affection Gauge (<span id="cute-val">50</span>%)</div>
+            <div class="bar-container"><div id="cute-fill" class="bar-fill"></div></div>
+        </div>
+
+        <div class="card">
+            <div class="label">Live Transcript</div>
+            <div id="transcript" class="transcript">Awaiting whisper input...</div>
+        </div>
+    </div>
+
+    <script>
+        function updateHUD() {
+            fetch('/stats')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('status').innerText = data.status;
+                    document.getElementById('game').innerText = data.game;
+                    document.getElementById('sass-val').innerText = data.sass;
+                    document.getElementById('cute-val').innerText = data.cute;
+                    document.getElementById('sass-fill').style.width = data.sass + '%';
+                    document.getElementById('cute-fill').style.width = data.cute + '%';
+                    if (data.last_response) {
+                        document.getElementById('transcript').innerText = data.last_response;
+                    }
+                })
+                .catch(err => console.error("HUD Error:", err));
+        }
+        setInterval(updateHUD, 500);
+    </script>
+</body>
+</html>
