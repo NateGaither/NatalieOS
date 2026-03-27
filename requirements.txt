@@ -1,0 +1,15 @@
+# Web & API
+flask
+requests
+python-dotenv
+
+# Audio & Math
+numpy
+sounddevice
+pygame
+soundfile
+
+# TTS (The Voice)
+kokoro-onnx
+onnxruntime-gpu; sys_platform == 'win32' and 'nvidia' in hardware # Auto-selects GPU if available
+onnxruntime; sys_platform != 'win32' or 'nvidia' not in hardware
