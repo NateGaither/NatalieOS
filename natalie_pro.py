@@ -1,148 +1,148 @@
-import threading, time, os, pygame, requests, json
+import threading, time, os, requests, json, pygame
 import numpy as np
 import sounddevice as sd
-from kokoro_onnx import KokoroONNX
-from flask import Flask, render_template, jsonify
-from faster_whisper import WhisperModel
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-import psutil, win32gui, win32process
+from kokoro_onnx import Kokoro
+from flask import Flask, render_template, jsonify, request
+from dotenv import load_dotenv, set_key # pip install python-dotenv
 
-# --- CONFIGURATION ---
-L3_BUTTON = 8           # Controller Button ID
-OLLAMA_MODEL = "llama3" # Ensure this is pulled in Ollama
-V_CABLE_NAME = "CABLE Input"
+# --- 1. KEY MANAGEMENT ---
+ENV_FILE = ".env"
+
+def get_or_set_key():
+    load_dotenv(ENV_FILE)
+    key = os.getenv("OPENROUTER_API_KEY")
+    
+    if not key or key.strip() == "":
+        print("\n🔑 Natalie needs a brain! (OpenRouter API Key missing)")
+        print("Get one for free at: https://openrouter.ai/keys")
+        key = input("Please enter your API Key: ").strip()
+        
+        # Save it to .env so the user doesn't have to enter it next time
+        set_key(ENV_FILE, "OPENROUTER_API_KEY", key)
+        print("✅ Key saved to .env file!\n")
+    
+    return key
+
+# Initialize Configuration
+OPENROUTER_KEY = get_or_set_key()
+CLOUD_MODEL = "liquid/lfm-2.5-1.2b-instruct:free" 
+LOCAL_MODEL = "llama3.2:3b"
 PORT = 5000
 
-# Global State
 state = {
-    "sass": 50,
-    "cute": 50,
-    "status": "IDLE",
-    "game": "Desktop",
-    "last_response": "System Ready...",
-    "history": []
+    "sass": 50, "cute": 50, "status": "IDLE", "game": "Desktop",
+    "last_response": "System Online...", "history": [],
+    "brain": "Initializing..."
 }
 
-# --- INITIALIZE MODELS ---
-# Note: Ensure kokoro-v0.19.onnx and voices.json are in the folder
-tts = KokoroONNX("kokoro-v0.19.onnx", "voices.json")
-whisper_model = WhisperModel("base", device="cuda", compute_type="float16")
-
-# --- UTILITIES ---
-def set_mute(mute=True):
-    """Mutes the physical system microphone for stealth."""
+# --- 2. HARDWARE & AUDIO ---
+def has_gpu():
     try:
-        devices = AudioUtilities.GetMicrophone()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = cast(interface, POINTER(IAudioEndpointVolume))
-        volume.SetMute(1 if mute else 0, None)
-    except: pass
+        import subprocess
+        subprocess.check_output(['nvidia-smi'], stderr=subprocess.STDOUT)
+        return True
+    except: return False
 
-def get_active_game():
-    """Detects what window you are currently looking at."""
-    try:
-        hwnd = win32gui.GetForegroundWindow()
-        _, pid = win32process.GetWindowThreadProcessId(hwnd)
-        return psutil.Process(pid).name().replace(".exe", "")
-    except: return "Desktop"
+GPU_AVAILABLE = has_gpu()
+sd.default.device = 0 
 
-def speak(text):
-    """Generates audio and routes it to the Virtual Cable."""
-    samples, sample_rate = tts.create(text, voice="af_bella", speed=1.1)
-    devices = sd.query_devices()
-    cable_id = next((i for i, d in enumerate(devices) if V_CABLE_NAME in d['name']), None)
-    if cable_id is not None:
-        sd.play(samples, sample_rate, device=cable_id)
-        sd.wait()
+# --- 3. TTS INITIALIZATION ---
+try:
+    tts = Kokoro("kokoro-v0.19.onnx", "voices.json")
+    print("✅ TTS Model Loaded")
+except Exception as e:
+    print(f"❌ TTS Load Failed: {e}")
+    tts = None
 
-def ask_ollama(user_input):
-    """Sends the instructions.txt + history + input to Ollama."""
+# --- 4. THE BRAIN ---
+def ask_ai(user_input):
     with open("instructions.txt", "r") as f:
-        # Pass current state into the instructions template
-        system_prompt = f.read().format(
-            game=state["game"],
-            sass=state["sass"],
-            cute=state["cute"],
-            history="\n".join([f"User: {m['u']}\nNatalie: {m['n']}" for m in state["history"]])
-        )
-
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": f"{system_prompt}\nUser: {user_input}\nResponse (JSON):",
-        "format": "json",
-        "stream": False
-    }
+        template = f.read()
     
-    try:
-        r = requests.post("http://localhost:11434/api/generate", json=payload)
-        return json.loads(r.json().get("response", "{}"))
-    except:
-        return {"sass": state["sass"], "cute": state["cute"], "response": "Brain error! Check Ollama."}
+    recent_history = state["history"][-5:]
+    history_text = "\n".join([f"U: {h['u']} N: {h['n']}" for h in recent_history])
+    
+    system_info = template.format(
+        game=state["game"], sass=state["sass"], cute=state["cute"], history=history_text
+    )
 
-# --- WEB SERVER ---
-app = Flask(__name__)
+    if GPU_AVAILABLE:
+        try:
+            state["brain"] = f"LOCAL ({LOCAL_MODEL})"
+            r = requests.post("http://localhost:11434/api/chat", json={
+                "model": LOCAL_MODEL,
+                "messages": [{"role": "system", "content": system_info}, {"role": "user", "content": user_input}],
+                "stream": False
+            }, timeout=5)
+            return r.json()['message']['content']
+        except: pass
+
+    try:
+        state["brain"] = f"CLOUD ({CLOUD_MODEL})"
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_KEY}",
+            "HTTP-Referer": "http://localhost:5000",
+            "X-Title": "NatalieOS",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": CLOUD_MODEL,
+            "messages": [
+                {"role": "system", "content": system_info},
+                {"role": "user", "content": user_input}
+            ]
+        }
+        r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=15)
+        if r.status_code == 200:
+            return r.json()['choices'][0]['message']['content']
+        else:
+            return f"Error {r.status_code}: Please check your API key in .env"
+    except Exception as e:
+        return f"System Error: {e}"
+
+# --- 5. INTERACTION & AUDIO ---
+def process_interaction(user_text):
+    if not user_text.strip(): return
+    state["status"] = "THINKING"
+    
+    raw_response = ask_ai(user_text)
+    clean_text = raw_response.replace("Natalie:", "").strip()
+    
+    # Simple Mood Logic
+    low = clean_text.lower()
+    if any(w in low for w in ["ugh", "dummy", "stop"]): state["sass"] = min(100, state["sass"] + 10)
+    if any(w in low for w in [":3", "pats", "cute"]): state["cute"] = min(100, state["cute"] + 10)
+
+    state["last_response"] = clean_text
+    state["status"] = "SPEAKING"
+    
+    print(f"[{state['brain']}] Natalie: {clean_text}")
+    if tts:
+        try:
+            samples, sample_rate = tts.create(clean_text, voice="af_bella", speed=1.1)
+            sd.play(samples, sample_rate)
+            sd.wait()
+        except: pass
+
+    state["history"].append({"u": user_text, "n": clean_text})
+    state["status"] = "IDLE"
+
+# --- 6. FLASK SERVER ---
+app = Flask(__name__, template_folder=os.path.abspath('templates'), static_folder=os.path.abspath('static'))
+
 @app.route('/')
 def index(): return render_template('dashboard.html')
+
 @app.route('/stats')
 def stats(): return jsonify(state)
 
-# --- MAIN LOOP ---
-def main():
-    pygame.init()
-    pygame.joystick.init()
-    if pygame.joystick.get_count() == 0:
-        print("Error: No controller detected!")
-        return
-    joy = pygame.joystick.Joystick(0)
-    joy.init()
-
-    print("Natalie OS Active. Connect phone to Dashboard to begin.")
-
-    while True:
-        pygame.event.pump()
-        state["game"] = get_active_game()
-
-        if joy.get_button(L3_BUTTON):
-            state["status"] = "LISTENING"
-            set_mute(True) # Stealth mute ON
-            
-            # Record Audio
-            fs, rec = 16000, []
-            while joy.get_button(L3_BUTTON):
-                chunk = sd.rec(int(0.2 * fs), samplerate=fs, channels=1); sd.wait()
-                rec.append(chunk)
-            
-            state["status"] = "THINKING"
-            audio = np.concatenate(rec, axis=0).flatten()
-            segments, _ = whisper_model.transcribe(audio)
-            user_text = " ".join([s.text for s in segments]).strip()
-
-            if user_text:
-                # Process through Ollama
-                ai_data = ask_ollama(user_text)
-                
-                # Update global state from AI JSON output
-                state["sass"] = ai_data.get("sass", state["sass"])
-                state["cute"] = ai_data.get("cute", state["cute"])
-                state["last_response"] = ai_data.get("response", "...")
-
-                # Speak
-                state["status"] = "SPEAKING"
-                speak(state["last_response"])
-                
-                # Save to Memory
-                state["history"].append({"u": user_text, "n": state["last_response"]})
-                if len(state["history"]) > 10: state["history"].pop(0)
-
-            set_mute(False) # Stealth mute OFF
-            state["status"] = "IDLE"
-        
-        time.sleep(0.05)
+@app.route('/manual', methods=['POST'])
+def manual_trigger():
+    text = request.json.get("text", "")
+    threading.Thread(target=process_interaction, args=(text,)).start()
+    return jsonify({"status": "sent"})
 
 if __name__ == '__main__':
-    # Ensure templates folder exists
-    if not os.path.exists('templates'): os.makedirs('templates')
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, use_reloader=False)).start()
-    main()
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT), daemon=True).start()
+    print(f"🚀 Dashboard: http://localhost:{PORT}")
+    while True: time.sleep(1)
